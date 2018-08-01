@@ -3,17 +3,99 @@ title: "SPI Analysis"
 output: html_notebook
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
-
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+## Load Data
 
 ```{r}
-plot(cars)
+spi.table = read.csv("soccer-spi/spi_global_rankings.csv", header = TRUE)
+head(spi.table)
+
+trt.deu = spi.table[spi.table$league=="German Bundesliga", "spi"]
+trt.esp = spi.table[spi.table$league=="Spanish Primera Division", "spi"]
+trt.ita = spi.table[spi.table$league=="Italy Serie A", "spi"]
+trt.eng = spi.table[spi.table$league=="Barclays Premier League", "spi"]
 ```
 
-Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+## BoxPlots
 
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+```{r}
+library(ggplot2)
 
-The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+spi.table.filtered = spi.table[spi.table$league %in% c("German Bundesliga",
+                                                       "Spanish Primera Division",
+                                                       "Italy Serie A",
+                                                       "Barclays Premier League"),]
 
+spi.table.filtered$league = as.character(spi.table.filtered$league)
+spi.table.filtered$league[spi.table.filtered$league == "German Bundesliga"] <- "Bundesliga"
+spi.table.filtered$league[spi.table.filtered$league == "Spanish Primera Division"] <- "La Liga"
+spi.table.filtered$league[spi.table.filtered$league == "Italy Serie A"] <- "Serie A"
+spi.table.filtered$league[spi.table.filtered$league == "Barclays Premier League"] <- "Premier League"
+spi.table.filtered$league = as.factor(spi.table.filtered$league)
+
+p <- ggplot(spi.table.filtered, aes(league, spi, color=league)) + 
+  geom_boxplot() +
+  labs(title = "Soccer Power Index Ratings", x="League", y="SPI")
+ggsave("images/boxplot.png")
+```
+
+## Permutation F-Test
+
+```{r}
+source("http://www4.stat.ncsu.edu/~lu/ST505/Rcode/functions-Ch3.R")
+
+set.seed(123)
+k = 4
+x = c(trt.deu, trt.esp, trt.ita, trt.eng)
+n = length(x)
+groupLengths = c(
+  length(trt.deu),
+  length(trt.esp),
+  length(trt.ita),
+  length(trt.eng)
+  )
+grps = rep(1:k, times=groupLengths)
+(trtmeans <- getmeans(x,grps))
+
+#ANOVA based on the assumption of normal distribution with equal variance
+summary(aov(x ~ factor(grps)))
+
+# Observed F-value
+#Fobs <- summary(aov(x~factor(grps)))[[1]][1,4]
+Fobs = getF(x,grps)
+perm.F = perm.approx.F(x, grps, R=1000)
+(perm.pval = mean(perm.F >= Fobs))
+```
+
+
+## Load across-year data
+```{r}
+spi.matches = read.csv("soccer-spi/spi_matches.csv", header = TRUE)
+head(spi.matches)
+spi.matches[spi.matches$team1=="AS Monaco",]
+```
+
+## Paired-Comparison Permutation Tests
+
+```{r}
+source("http://www4.stat.ncsu.edu/~lu/ST505/Rcode/functions-Ch4.R")
+
+redB = c(3.93, 5.35, 5.39, 5.16, 5.13)
+redC = c(3.86, 5.10, 5.39, 5.01, 5.05)
+d <- redC-redB
+(dbar = mean(d))
+
+### n=5 and 2^5 > 32. If there are too many combinations, use the random permutation implemented by function perm.approx.dbar, e.g. you can use permdbars <- perm.approx.dbar(d, R=1000)
+permdbars <- perm.dbar(d)
+
+#pvalue for one-tailed test H_a: measures for redB tend to be larger than measures for redC
+#reject if dbar is too large (positive)
+(pval.upper = mean(permdbars >= dbar))
+
+#pvalue for one-tailed test H_a: measures for redB tend to be smaller than measures for redC
+#reject if dbar is too small (negative)
+(pval.lower = mean(permdbars <= dbar))
+
+#pvalue for two-tailed test H_a: measures for redB tend to be either larger or smaller than measures for redC
+#reject if dbar is either too large (positive) or too small (negative)
+(pval.twotail = mean(abs(permdbars) >= abs(dbar)))
+```
