@@ -32,10 +32,11 @@ spi.table.filtered$league[spi.table.filtered$league == "Italy Serie A"] <- "Seri
 spi.table.filtered$league[spi.table.filtered$league == "Barclays Premier League"] <- "Premier League"
 spi.table.filtered$league = as.factor(spi.table.filtered$league)
 
-p <- ggplot(spi.table.filtered, aes(league, spi, color=league)) + 
-  geom_boxplot() +
-  labs(title = "Soccer Power Index Ratings", x="League", y="SPI")
+p <- ggplot(spi.table.filtered, aes(league, spi, fill=league, color=league, alpha=0.4)) + 
+  geom_boxplot(show.legend = FALSE) +
+  labs(title = "Soccer Power Index Team Ratings", x="League", y="SPI")
 ggsave("images/boxplot.png")
+p
 ```
 
 ## Permutation F-Test
@@ -62,40 +63,125 @@ summary(aov(x ~ factor(grps)))
 # Observed F-value
 #Fobs <- summary(aov(x~factor(grps)))[[1]][1,4]
 Fobs = getF(x,grps)
-perm.F = perm.approx.F(x, grps, R=1000)
+perm.F = perm.approx.F(x, grps, R=10000)
 (perm.pval = mean(perm.F >= Fobs))
 ```
 
 
 ## Load across-year data
 ```{r}
+library(dplyr)
+
 spi.matches = read.csv("soccer-spi/spi_matches.csv", header = TRUE)
-head(spi.matches)
-spi.matches[spi.matches$team1=="AS Monaco",]
+spi.matches$date = as.Date(spi.matches$date)
+
+spi.matches.filtered = spi.matches[spi.matches$date > "2017-07-01",]
+spi.matches.filtered = spi.matches.filtered[spi.matches.filtered$league %in% c("German Bundesliga",
+                                                       "Spanish Primera Division",
+                                                       "Italy Serie A",
+                                                       "Barclays Premier League"),]
+spi.matches.filtered = spi.matches.filtered[,c("date", "league", "team1", "team2", "spi1", "spi2")]
+spi.matches.filtered.reverse = spi.matches.filtered
+names(spi.matches.filtered.reverse) = c("date", "league", "team2", "team1", "spi2", "spi1")
+spi.matches.filtered.all = rbind(spi.matches.filtered, spi.matches.filtered.reverse)
+
+spi.matches.filtered.ba = spi.matches.filtered.all %>% 
+  arrange(date) %>%
+  group_by(team1) %>%
+  mutate(
+    spi.begin = first(spi1),
+    spi.end = last(spi1)
+    ) %>%
+  select(league, team1, spi.begin, spi.end) %>%
+  filter(row_number()==1)
+
+spi.matches.filtered.all
+spi.matches.filtered.ba
+```
+
+## Time series team SPI plot
+
+```{r}
+p = ggplot(spi.matches.filtered.all, aes(x=date,y=spi1,colour=league,group=team1)) +
+  geom_line() +
+  labs(title = "Soccer Power Index Team Ratings (2017-18 Season)", x="Date", y="SPI", color="League")
+ggsave("images/allTeamsTimeSeries.png",p)
+p
+```
+
+```{r}
+library(gridExtra)
+p1 = ggplot(filter(spi.matches.filtered.all, league=="German Bundesliga"), aes(x=date,y=spi1,colour=team1,group=team1)) +
+  geom_line(show.legend = FALSE) +
+  labs(title = "Bundesliga", x="Date", y="SPI", color="Club")
+p2 = ggplot(filter(spi.matches.filtered.all, league=="Spanish Primera Division"), aes(x=date,y=spi1,colour=team1,group=team1)) +
+  geom_line(show.legend = FALSE) +
+  labs(title = "La Liga", x="Date", y="SPI", color="Club")
+p3 = ggplot(filter(spi.matches.filtered.all, league=="Italy Serie A"), aes(x=date,y=spi1,colour=team1,group=team1)) +
+  geom_line(show.legend = FALSE) +
+  labs(title = "Serie A", x="Date", y="SPI", color="Club")
+p4 = ggplot(filter(spi.matches.filtered.all, league=="Barclays Premier League"), aes(x=date,y=spi1,colour=team1,group=team1)) +
+  geom_line(show.legend = FALSE) +
+  labs(title = "Premier League", x="Date", y="SPI", color="Club")
+
+grid.arrange(p1,p2,p3,p4, ncol=2)
+ggsave("images/timeSeries.png", arrangeGrob(p1,p2,p3,p4))
 ```
 
 ## Paired-Comparison Permutation Tests
 
 ```{r}
 source("http://www4.stat.ncsu.edu/~lu/ST505/Rcode/functions-Ch4.R")
+set.seed(123)
 
-redB = c(3.93, 5.35, 5.39, 5.16, 5.13)
-redC = c(3.86, 5.10, 5.39, 5.01, 5.05)
-d <- redC-redB
-(dbar = mean(d))
-
-### n=5 and 2^5 > 32. If there are too many combinations, use the random permutation implemented by function perm.approx.dbar, e.g. you can use permdbars <- perm.approx.dbar(d, R=1000)
-permdbars <- perm.dbar(d)
-
-#pvalue for one-tailed test H_a: measures for redB tend to be larger than measures for redC
-#reject if dbar is too large (positive)
-(pval.upper = mean(permdbars >= dbar))
-
-#pvalue for one-tailed test H_a: measures for redB tend to be smaller than measures for redC
-#reject if dbar is too small (negative)
-(pval.lower = mean(permdbars <= dbar))
-
-#pvalue for two-tailed test H_a: measures for redB tend to be either larger or smaller than measures for redC
-#reject if dbar is either too large (positive) or too small (negative)
-(pval.twotail = mean(abs(permdbars) >= abs(dbar)))
+for(league in unique(spi.matches.filtered.ba$league)) {
+  spi.matches.leagueFilter <- spi.matches.filtered.ba[spi.matches.filtered.ba$league == league,]
+  d <- spi.matches.leagueFilter$spi.end - spi.matches.leagueFilter$spi.begin
+  (dbar = mean(d))
+  permdbars <- perm.approx.dbar(d, R=10000)
+  pval.upper = mean(permdbars >= dbar)
+  pval.lower = mean(permdbars <= dbar)
+  pval.twotail = mean(abs(permdbars) >= abs(dbar))
+  print(paste(league, dbar, pval.twotail))
+}
 ```
+
+## MLS / EFL Championship Data
+
+```{r}
+trt.mls = spi.table[spi.table$league=="Major League Soccer",]
+trt.eng2 = spi.table[spi.table$league=="English League Championship",]
+
+dat <- data.frame(xx = c(runif(100,20,50),runif(100,40,80),runif(100,0,30)),yy = rep(letters[1:3],each = 100))
+trt.all = rbind(trt.mls, trt.eng2)
+p = ggplot(trt.all,aes(x=spi, group=league, fill=league, color=league)) + 
+  geom_histogram(data=trt.mls, alpha = 0.4, binwidth = 5) +
+  geom_histogram(data=trt.eng2, alpha = 0.4, binwidth = 5) +
+  labs(title = "MLS/EFL SPI (2017-18)", x="SPI", y="Count")
+ggsave("images/mls_efl.png", p)
+p
+```
+
+## MLS / EFL Championship Test for Deviances
+```{r}
+source("http://www4.stat.ncsu.edu/~lu/ST505/Rcode/functions-Ch2.R")
+
+x = trt.mls$spi
+y = trt.eng2$spi
+
+devx = x - median(x)
+devy = y - median(y)
+m = length(x)
+n = length(y)
+rmd2 <- max(mean(abs(devx)) , mean(abs(devy)) )/
+       min(mean(abs(devx)) , mean(abs(devy))  )
+
+set.seed(123)
+permrmds.approx <- perm.approx.rmd(c(devx,devy),m, R=10000)
+mean(permrmds.approx >= rmd2)
+
+rand.perm(x, y, R=1000, alternative = "less", stat= "mediandiff")
+rand.perm(x, y, R=1000, alternative = "less", stat= "meandiff")
+```
+
+
